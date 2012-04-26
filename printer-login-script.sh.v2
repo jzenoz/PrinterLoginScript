@@ -1,0 +1,235 @@
+#!/bin/sh
+
+tmp1=/tmp/pr-st-1.$$
+
+tmp2=/tmp/pr-st-2.$$
+
+
+# wait for computer to finish startup tasks
+#sleep 10
+
+#
+# first collect user/machine groups
+#
+
+if [ -f /cygdrive/c/NTDETECT.COM ]
+then
+		gpresult > $tmp1
+else
+		gpresult /R > $tmp1
+fi
+
+#
+# convert to just user groups, reusing tmp1
+# changed from tmp2 2012-01-04
+#
+
+cat $tmp1 \
+	| sed -e '1,/The user/d'  \
+	| sed 's/^    -*$//' \
+	| sed 's/ //g' \
+	| sed '/^$/d' > $tmp2
+
+mv $tmp2 $tmp1 
+
+#
+# tmp3 has machines groups, this only works for XP
+# XP is faculty only assumed, therefore we can assign printers directly
+# to faculty when we skip the dsquery block
+#
+#if [ -f /cygdrive/c/NTDETECT.COM ]
+#then
+#	cat $tmp1 \
+#		| sed -e '1,/The computer/d'  \
+#		| sed '/USER SETT/,$d' \
+#		| sed 's/-//g'  \
+#		| sed 's/ //g'  \
+#		| sed '/^$/d' > $tmp3
+#fi
+
+#
+# define groups of printers
+#
+
+thirdfloorprinters="press fountain stapler clipboard"
+labstaffprinters="inky canvas scs-color biz"
+
+#
+# now the fun begins
+# based on user groups, map appropriate printers
+#
+
+#
+# adds venom, pencil, np237 to the machine
+#
+
+rundll32 printui.dll PrintUIEntry /in /n '\\papermill\venom' /q 
+rundll32 printui.dll PrintUIEntry /in /n '\\papermill\pencil' /q 
+rundll32 printui.dll PrintUIEntry /in /n '\\papermill\np237' /q 
+
+defaultprinter="nodefault"
+
+	
+#
+# staff.lab get $labstaffprinters
+#
+
+if  grep -q ^staff.lab $tmp1
+then
+	for i in `echo $labstaffprinters`
+	do
+		rundll32 printui.dll PrintUIEntry /in /n \\\\papermill\\$i /q 
+	done
+fi
+	
+#
+# staff.office get $thirdfloorprinters
+#
+
+if  grep -q ^staff.office $tmp1
+then 
+	for i in `echo $thirdfloorprinters`
+	do
+		rundll32 printui.dll PrintUIEntry /in /n \\\\papermill\\$i /q 
+	done
+	defaultprinter="stapler"
+fi
+	
+#
+# faculty get $thirdfloorprinters and 
+#
+
+if  grep -q ^faculty $tmp1
+then 
+	for i in `echo $thirdfloorprinters` 
+	do
+		rundll32 printui.dll PrintUIEntry /in /n \\\\papermill\\$i /q 
+	done
+fi
+
+
+#
+# other group assignments and/or default printer assignments based on machine
+# set default printer based on machine location
+#
+
+hostname=`hostname | sed -e 's/\r$//g'`
+
+
+#
+# check if dsget is installed, otherwise skip all this
+#
+
+if [ ! -x /cygdrive/c/Windows/system32/dsget ]
+then
+	echo "NO DSGET"
+else
+	#
+	# set default printer for machines in ecs237
+	#
+
+	if dsget computer "CN=$hostname,OU=Lab Computers,DC=ad,DC=cs,DC=fiu,DC=edu" -memberof 2>/dev/null | grep -qi ecs237
+	then 
+		defaultprinter="np237"
+	fi
+
+	#
+	# set default printer for machines in the gradlab
+	#
+
+	if dsget computer "CN=$hostname,OU=Lab Computers,DC=ad,DC=cs,DC=fiu,DC=edu" -memberof 2>/dev/null | grep -qi gradlab
+	then 
+		defaultprinter="pencil"
+	fi
+		
+	#
+	# set default printer for machines in ilab
+	#
+
+	if dsget computer "CN=$hostname,OU=Lab Computers,DC=ad,DC=cs,DC=fiu,DC=edu" -memberof 2>/dev/null  | grep -qi ilab
+	then
+		defaultprinter="ilab"
+	fi
+
+	#
+	# set default printer for machines in the jccl
+	#
+
+	if dsget computer "CN=$hostname,OU=Lab Computers,DC=ad,DC=cs,DC=fiu,DC=edu" -memberof 2>/dev/null  | grep -qi jccl
+	then
+		defaultprinter="venom"
+	fi
+fi
+#
+# there are no machine groups for faculty
+#
+
+#
+# there may be a problem with the secratarys upstairs. they dont have their own group for computers
+#
+
+#
+# check if defaultprinter has been set, if so make sure defaultprinter is added, then sleep 10 seconds, then assign defaultprinter as default.
+#
+
+if [ "$defaultprinter" != "nodefault" ]
+then
+	rundll32 printui.dll PrintUIEntry /in /n \\\\papermill\\$defaultprinter /q 
+	rundll32 printui.dll PrintUIEntry /y /n \\\\papermill\\$defaultprinter /q 
+fi
+
+rm $tmp1 
+
+
+#
+# Ver 0.2 
+# 2012-01-11 esj jzeno001
+# kinda reworked a bunch of stuff 
+#
+#
+#
+# removed obsolete rm targets: $tmp2 $tmp3 2012-01-04 JZ
+
+# //Parameter Notes:
+# --Base Parameters--
+# /y set as default
+# /in add network printer
+# /ga add per machine printer connections (the connection will be propagated to the user upon logon)
+#
+# --Modification Parameters--
+# /n specifies printer name
+# /u use existing driver if already installed*
+# /q quietly*
+# /G[flags] specifies global flags and switches
+#	w	suppress setup driver warnings UI (super quiet mode)
+
+# //ChangeLog:
+# 2011-09-22
+# Removed all obsolete "echo 'start \\papermill\printername' | $cmd" usages
+# Replaced previous with 'rundll32 printui.dll PrintUIEntry', works with XP, Vista, Windows 7
+# Replaced DefPrint.exe
+# Cleaned up spacing
+# Added bottom commenting section
+# 2011-09-23
+# Removed 'labstaff' printer since it doesn't exist, replaced with inky
+# Synced script with updated already deployed script adding ecs237 and pencil for global
+# Added check for which OS was running, gpresult /R for 7, gpresult alone for XP
+# 2011-09-23
+# Sleep 10 seconds at start, trying to fix win7 error (esj)
+# 2012-01-04 (JZ)
+# Sleep increased to 15 seconds at start. moved sleep for default printer check
+# Changed printers that all users received to a per machine add instead of per user, should speed things up
+# Added additional sleep statement after global printer add
+# Removed $allusersprinter, was defunct
+# Shrunk the number of temp files needed now that user groups only work on XP
+# Added ds if statements to check machine location, Win7 fix.
+# 2012-01-06 (JZ)
+# Removed global command from run on all machines commands.
+# 2012-01-10 stop sleeping so much (esj)
+#
+# 2012-01-11 esj jzeno001
+# rework the script to take out echo | cmd stuff
+
+# //Notes:
+# Shorthand printui.exe available for future Win7 only usages
+
